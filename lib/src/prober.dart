@@ -114,15 +114,15 @@ class Prober {
     var keepLogs = false;
     try {
       xray = await _startXray(proxy);
-      final response = await _socksHttpsGet(xray.port, probeUrl);
+      final status = await socksHttpsGet(xray.port, probeUrl);
       stopwatch.stop();
-      final ok = response.statusCode == HttpStatus.noContent;
+      final ok = status == HttpStatus.noContent;
       return _result(
         proxy,
         ProbeType.full,
         ok,
         stopwatch.elapsedMilliseconds,
-        ok ? null : 'Expected HTTP 204, got ${response.statusCode}',
+        ok ? null : 'Expected HTTP 204, got $status',
       );
     } catch (error, trace) {
       keepLogs = true;
@@ -384,32 +384,48 @@ class Prober {
   );
 }
 
-Future<_HttpProbeResponse> _socksHttpsGet(int socksPort, Uri uri) async {
+/// GET [uri] through the SOCKS5 proxy on [socksPort]; returns the status.
+Future<int> socksHttpsGet(
+  int socksPort,
+  Uri uri, {
+  Duration timeout = const Duration(seconds: 7),
+}) async {
+  final proxies = [ProxySettings(InternetAddress.loopbackIPv4, socksPort)];
+  // Not SocksTCPClient.assignToHttpClient*: its cancel callback awaits the
+  // pending TLS handshake and rethrows its failure where nobody listens. After
+  // a timeout the client is closed and xray killed, the handshake dies, and
+  // that unhandled HandshakeException took the whole agent down.
   final client = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 7)
-    ..badCertificateCallback = (cert, host, port) => false; // строгая проверка
-
-  SocksTCPClient.assignToHttpClientWithSecureOptions(client, [
-    ProxySettings(InternetAddress.loopbackIPv4, socksPort),
-  ]);
+    ..connectionTimeout = timeout
+    ..connectionFactory = (target, _, _) {
+      final socks = SocksTCPClient.connect(
+        proxies,
+        // Hostname as-is, resolved by the proxy (same as socks5_proxy does).
+        InternetAddress(target.host, type: InternetAddressType.unix),
+        target.port,
+      );
+      final Future<Socket> socket = target.scheme == 'https'
+          ? socks.then((s) => s.secure(target.host))
+          : socks;
+      return Future.value(
+        ConnectionTask.fromSocket(socket, () {
+          // Cancelled: drop the connection whenever it settles; a late
+          // failure has nobody left to report to.
+          socket.then((s) => s.destroy(), onError: (Object _) {});
+        }),
+      );
+    };
 
   try {
-    final request = await client
-        .getUrl(uri)
-        .timeout(const Duration(seconds: 7));
+    final request = await client.getUrl(uri).timeout(timeout);
     request.headers.set(HttpHeaders.connectionHeader, 'close');
 
-    final response = await request.close().timeout(const Duration(seconds: 7));
+    final response = await request.close().timeout(timeout);
     await response.drain<void>(); // 204 без тела, но на всякий случай сливаем
-    return _HttpProbeResponse(response.statusCode);
+    return response.statusCode;
   } finally {
     client.close(force: true);
   }
-}
-
-final class _HttpProbeResponse {
-  final int statusCode;
-  const _HttpProbeResponse(this.statusCode);
 }
 
 final class XrayProcess {

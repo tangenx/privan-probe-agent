@@ -25,6 +25,7 @@ jobs:
           sdk: 3.13.1
       - run: dart pub get
       - run: dart analyze
+      - run: dart test
 
       # The runtime stage runs apt-get for the target arch.
       - uses: docker/setup-qemu-action@v4
