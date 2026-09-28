@@ -1,0 +1,6 @@
+# Only what the image compiles from.
+*
+!pubspec.yaml
+!pubspec.lock
+!lib/
+!bin/

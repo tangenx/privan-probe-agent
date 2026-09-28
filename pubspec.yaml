@@ -1,0 +1,16 @@
+name: privan_probe_agent
+description: >-
+  Probe agent for the PrivanVPN monitoring bot: checks VPN servers from
+  wherever it runs and reports back over HTTP.
+version: 1.0.0
+repository: https://github.com/tangenx/privan-probe-agent
+publish_to: none
+
+environment:
+  sdk: ^3.13.1
+
+dependencies:
+  socks5_proxy: ^2.1.1
+
+dev_dependencies:
+  lints: ^6.1.0
